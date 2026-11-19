@@ -103,8 +103,20 @@ export function ensureDeviceModel(onProgress?: (progress: number) => void): Prom
     return Promise.resolve();
   }
   deviceInitState = 'downloading';
+  // initializeDeviceModel() could in principle throw synchronously (rather
+  // than returning a rejected promise); without this guard the offline
+  // button would stay stuck on "Mengunduh Nano…" forever.
+  let init: Promise<void>;
+  try {
+    init = model.initializeDeviceModel((p) => onProgress?.(p));
+  } catch (err) {
+    deviceInitState = 'failed';
+    deviceInitPromise = null;
+    console.warn('[Lancar] On-device model init failed synchronously.', err);
+    return Promise.resolve();
+  }
   deviceInitPromise = withTimeout(
-    model.initializeDeviceModel((p) => onProgress?.(p)),
+    init,
     DEVICE_INIT_TIMEOUT_MS,
     'initializeDeviceModel',
   )

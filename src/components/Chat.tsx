@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { chatTurn, correctionReport, ensureDeviceModel, getDeviceInitState } from '../lib/ai';
+import { demoReply } from '../lib/demoTutor';
 import { getRemoteConfigValues } from '../lib/firebase';
 import type { ChatMessage, CorrectionReportData, Settings } from '../lib/types';
 import { SourceBadge } from './StatusBar';
@@ -98,6 +99,13 @@ export default function Chat({ settings, onEndSession, onMessagesChanged }: Chat
       const result = await chatTurn(settings, persona, history, text);
       setMessages([...history, { id: nextId(), role: 'tutor', text: result.text, source: result.source }]);
       if (result.error) setError(result.error);
+    } catch {
+      // chatTurn is designed to never throw (it returns a demo fallback on
+      // failure), but if it ever does, still answer with the local demo
+      // tutor so the user is never left with a message and no reply.
+      const userCount = history.filter((m) => m.role === 'user').length;
+      setMessages([...history, { id: nextId(), role: 'tutor', text: demoReply(settings, text, userCount), source: 'demo' }]);
+      setError('AI cloud tidak bisa dihubungi (jaringan atau token App Check bermasalah). Tutor lokal menjawab untuk sementara — latihan tetap bisa dilanjutkan.');
     } finally {
       setSending(false);
     }
