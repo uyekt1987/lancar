@@ -81,9 +81,26 @@
       });
       log('  -> ok', 'ok');
 
-      log('STEP 5: generateContent("Say hello in one sentence.") — timeout 30s');
+      // Round 2 (19 Nov 15:10 WIB): gemini-flash-latest hung past 30s twice
+      // (15:05 and 15:09) after the 429 quota error disappeared. Give it a
+      // long 120s window to learn whether it EVER returns, then try the
+      // stable gemini-2.5-flash model as a comparison — at most 2 requests.
+      log('STEP 5: generateContent(gemini-flash-latest, "Say hello in one sentence.") — timeout 120s');
       try {
-        const res = await withTimeout(model.generateContent('Say hello in one sentence.'), 30000, 'generateContent');
+        const res = await withTimeout(model.generateContent('Say hello in one sentence.'), 120000, 'generateContent-flash-latest');
+        log('  -> RESPONSE OK: ' + JSON.stringify(res.response.text()), 'ok');
+        log('  inferenceSource: ' + JSON.stringify(res.response.inferenceSource));
+      } catch (e) {
+        log('  -> GENERATE FAILED: ' + (e && e.message ? e.message : String(e)), 'bad');
+      }
+
+      log('STEP 6: getGenerativeModel(ONLY_IN_CLOUD, gemini-2.5-flash) + generateContent — timeout 60s');
+      try {
+        const model25 = getGenerativeModel(ai, {
+          mode: InferenceMode.ONLY_IN_CLOUD,
+          inCloudParams: { model: 'gemini-2.5-flash' },
+        });
+        const res = await withTimeout(model25.generateContent('Say hello in one sentence.'), 60000, 'generateContent-2.5-flash');
         log('  -> RESPONSE OK: ' + JSON.stringify(res.response.text()), 'ok');
         log('  inferenceSource: ' + JSON.stringify(res.response.inferenceSource));
       } catch (e) {
