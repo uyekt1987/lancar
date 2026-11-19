@@ -30,6 +30,32 @@ import type {
 
 const CLOUD_MODEL = 'gemini-flash-latest';
 
+/**
+ * How long one AI call may run before it is treated as failed.
+ *
+ * The Firebase AI Logic SDK can leave `generateContent` pending FOREVER
+ * (observed 2026-11-19: the opening tutor message never arrived, no error,
+ * the whole chat stayed locked for 6+ minutes). Likely hang points are
+ * App Check token acquisition (enforcement is on for AI Logic), the
+ * PREFER_ON_DEVICE probe of the on-device model, or a stalled network
+ * request — the SDK neither resolves nor rejects in those cases, so the
+ * app's own timeout is the only thing that can unstick the UI.
+ */
+const AI_CALL_TIMEOUT_MS = 25_000;
+/** Device-model download is user-initiated and can legitimately be slow. */
+const DEVICE_INIT_TIMEOUT_MS = 60_000;
+
+/** Race a promise against a timer; rejects when the timer wins. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
 let hybridModel: GenerativeModel | null = null;
 let cloudModel: GenerativeModel | null = null;
 let deviceInitState: 'idle' | 'downloading' | 'ready' | 'failed' = 'idle';
@@ -77,15 +103,21 @@ export function ensureDeviceModel(onProgress?: (progress: number) => void): Prom
     return Promise.resolve();
   }
   deviceInitState = 'downloading';
-  deviceInitPromise = model
-    .initializeDeviceModel((p) => onProgress?.(p))
+  deviceInitPromise = withTimeout(
+    model.initializeDeviceModel((p) => onProgress?.(p)),
+    DEVICE_INIT_TIMEOUT_MS,
+    'initializeDeviceModel',
+  )
     .then(() => {
       deviceInitState = 'ready';
     })
-    .catch(() => {
+    .catch((err) => {
       // Download may fail offline or on an unsupported browser; the hybrid
-      // model still works — it will fall back to the cloud.
+      // model still works — it will fall back to the cloud. Clear the cached
+      // promise so the user can retry the download later.
       deviceInitState = 'failed';
+      deviceInitPromise = null;
+      console.warn('[Lancar] On-device model init failed or timed out.', err);
     });
   return deviceInitPromise;
 }
@@ -161,16 +193,27 @@ export async function chatTurn(
     return { text: demoReply(settings, userText, history.filter((m) => m.role === 'user').length), source: 'demo' };
   }
   try {
-    const result = await model.generateContent(buildChatPrompt(settings, persona, history, userText));
+    const result = await withTimeout(
+      model.generateContent(buildChatPrompt(settings, persona, history, userText)),
+      AI_CALL_TIMEOUT_MS,
+      'chatTurn',
+    );
     const text = result.response.text().trim();
     const source = mapInferenceSource(result.response.inferenceSource) ?? (await fallbackSource());
     return { text: text || 'Maaf, saya tidak sempat menjawab. Coba kirim lagi.', source };
-  } catch {
+  } catch (err) {
     // Never surface raw SDK errors (they contain endpoint URLs) to the user.
     // The technical detail is still available in the browser console.
+    // On ANY failure — rejection OR timeout — fall back to the local demo
+    // tutor so the conversation can continue, and report the failure so the
+    // UI can show an honest error banner (badge stays 'demo').
+    console.warn('[Lancar] chatTurn failed, falling back to demo tutor.', err);
+    const userCount = history.filter((m) => m.role === 'user').length;
     return {
-      text: 'Maaf, tutor sedang tidak bisa menjawab — sepertinya jaringan sedang bermasalah. Coba lagi sebentar lagi; jawabanmu tetap tersimpan.',
+      text: demoReply(settings, userText, userCount),
       source: 'demo',
+      error:
+        'AI cloud tidak bisa dihubungi (jaringan atau token App Check bermasalah). Tutor lokal menjawab untuk sementara — latihan tetap bisa dilanjutkan.',
     };
   }
 }
@@ -219,11 +262,14 @@ export async function correctionReport(
     REPORT_JSON_HINT,
   ].join('\n');
   try {
-    const result = await model.generateContent(prompt);
+    const result = await withTimeout(model.generateContent(prompt), AI_CALL_TIMEOUT_MS, 'correctionReport');
     const parsed = parseReportJson(result.response.text());
     if (!parsed) return demo;
     return { report: parsed, source: 'cloud' };
-  } catch {
+  } catch (err) {
+    // A hang here would freeze the "end session" flow the same way the chat
+    // greeting froze, so the timeout above is what unblocks it.
+    console.warn('[Lancar] correctionReport failed, falling back to demo report.', err);
     return demo;
   }
 }
@@ -254,12 +300,13 @@ export async function generateQuiz(vocab: VocabItem[]): Promise<{ questions: Qui
     'Each question asks the Indonesian meaning of one word. The 4 options must be plausible Indonesian meanings, with exactly one correct answer.',
   ].join('\n');
   try {
-    const result = await model.generateContent(prompt);
+    const result = await withTimeout(model.generateContent(prompt), AI_CALL_TIMEOUT_MS, 'generateQuiz');
     const questions = parseQuizJson(result.response.text());
     if (!questions || questions.length === 0) return { questions: demoQuiz(vocab), source: 'demo' };
     const source = mapInferenceSource(result.response.inferenceSource) ?? (await fallbackSource());
     return { questions, source };
-  } catch {
+  } catch (err) {
+    console.warn('[Lancar] generateQuiz failed, falling back to demo quiz.', err);
     return { questions: demoQuiz(vocab), source: 'demo' };
   }
 }

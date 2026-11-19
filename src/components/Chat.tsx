@@ -48,6 +48,10 @@ export default function Chat({ settings, onEndSession, onMessagesChanged }: Chat
 
   // Send the opening tutor message once, via the same chatTurn path as the
   // rest of the conversation (so the first message also gets a real badge).
+  // chatTurn never hangs: its AI call has a timeout and falls back to the
+  // local demo tutor, so `sending` always clears. The .catch() below is a
+  // last-resort guard — without it, a rejection here would leave the whole
+  // chat locked on "Tutor sedang mengetik…" forever (the 2026-11-19 bug).
   useEffect(() => {
     if (greetedRef.current) return;
     greetedRef.current = true;
@@ -55,6 +59,18 @@ export default function Chat({ settings, onEndSession, onMessagesChanged }: Chat
     void chatTurn(settings, persona, [], 'Hello! Please greet me and start our conversation.')
       .then((result) => {
         setMessages([{ id: nextId(), role: 'tutor', text: result.text, source: result.source }]);
+        if (result.error) setError(result.error);
+      })
+      .catch(() => {
+        setMessages([
+          {
+            id: nextId(),
+            role: 'tutor',
+            text: 'Hi! Selamat datang di Lancar. Ceritakan sedikit tentang dirimu dalam bahasa Inggris.',
+            source: 'demo',
+          },
+        ]);
+        setError('Tutor gagal dimulai. Tutor lokal menjawab untuk sementara — latihan tetap bisa dilanjutkan.');
       })
       .finally(() => setSending(false));
     // Only greet on mount; settings/persona changes start a fresh chat via App.
@@ -81,6 +97,7 @@ export default function Chat({ settings, onEndSession, onMessagesChanged }: Chat
     try {
       const result = await chatTurn(settings, persona, history, text);
       setMessages([...history, { id: nextId(), role: 'tutor', text: result.text, source: result.source }]);
+      if (result.error) setError(result.error);
     } finally {
       setSending(false);
     }
@@ -163,7 +180,10 @@ export default function Chat({ settings, onEndSession, onMessagesChanged }: Chat
         </button>
       </div>
 
-      <button type="button" className="btn-secondary end-session" onClick={() => void handleEndSession()} disabled={ending || sending}>
+      {/* Always clickable (except while the report itself is being built):
+          it must never be locked by an in-flight tutor reply — a stuck
+          "mengetik…" state used to make this button unreachable too. */}
+      <button type="button" className="btn-secondary end-session" onClick={() => void handleEndSession()} disabled={ending}>
         {ending ? 'Membuat laporan koreksi…' : 'Akhiri & lihat koreksi'}
       </button>
     </section>

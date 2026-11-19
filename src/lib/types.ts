@@ -67,6 +67,11 @@ export interface ProgressData {
 export interface AiResult {
   text: string;
   source: InferenceOrigin;
+  /**
+   * Set when the answer came from the local demo tutor because the real AI
+   * call failed or timed out. The UI shows this as an error banner.
+   */
+  error?: string;
 }
 
 export const LEVELS: Level[] = ['Pemula', 'Menengah', 'Mahir'];
