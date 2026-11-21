@@ -40,8 +40,14 @@ const CLOUD_MODEL = 'gemini-flash-latest';
  * PREFER_ON_DEVICE probe of the on-device model, or a stalled network
  * request — the SDK neither resolves nor rejects in those cases, so the
  * app's own timeout is the only thing that can unstick the UI.
+ *
+ * Raised 2026-11-20 from 25s to 90s: the 20 Nov 08:10 WIB cloud retest
+ * proved gemini-flash-latest answers, but only after 46.1s — longer than
+ * the old 25s timeout, so the greeting fell back to demo even though the
+ * cloud was working. 90s keeps ~2x headroom over the observed 46s while
+ * still unblocking the UI if the SDK hangs again.
  */
-const AI_CALL_TIMEOUT_MS = 25_000;
+const AI_CALL_TIMEOUT_MS = 90_000;
 /** Device-model download is user-initiated and can legitimately be slow. */
 const DEVICE_INIT_TIMEOUT_MS = 60_000;
 
