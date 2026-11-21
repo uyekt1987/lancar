@@ -199,14 +199,25 @@ function buildChatPrompt(settings: Settings, persona: string, history: ChatMessa
   ].join('\n');
 }
 
-/** One chat turn: fold persona + history + latest message into a single prompt. */
+/** One chat turn: fold persona + history + latest message into a single prompt.
+ *
+ * `cloudOnly` skips the on-device probe and calls Gemini in the cloud
+ * directly (ONLY_IN_CLOUD). The hybrid model (PREFER_ON_DEVICE) probes
+ * Gemini Nano first, and that probe can hang for the full timeout in
+ * browsers where Nano is not available — the 2026-11-21 live test showed
+ * the greeting falling back to demo after 60–90s even though a direct
+ * cloud call answered in 46s (diag, 2026-11-20). The opening greeting
+ * uses cloudOnly so the first message arrives from the real cloud model
+ * instead of waiting on a probe that will never succeed here.
+ */
 export async function chatTurn(
   settings: Settings,
   persona: string,
   history: ChatMessage[],
   userText: string,
+  cloudOnly = false,
 ): Promise<AiResult> {
-  const model = getHybridModel();
+  const model = cloudOnly ? getCloudModel() : getHybridModel();
   if (!model) {
     return { text: demoReply(settings, userText, history.filter((m) => m.role === 'user').length), source: 'demo' };
   }
