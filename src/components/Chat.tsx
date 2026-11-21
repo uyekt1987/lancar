@@ -49,6 +49,10 @@ export default function Chat({ settings, onEndSession, onMessagesChanged }: Chat
 
   // Send the opening tutor message once, via the same chatTurn path as the
   // rest of the conversation (so the first message also gets a real badge).
+  // The greeting goes straight to the cloud (cloudOnly): the hybrid model's
+  // on-device probe hangs for the full timeout in browsers without Nano,
+  // and the greeting is the first thing the user sees — it should arrive
+  // from Gemini, not from the demo fallback. (See ai.ts chatTurn.)
   // chatTurn never hangs: its AI call has a timeout and falls back to the
   // local demo tutor, so `sending` always clears. The .catch() below is a
   // last-resort guard — without it, a rejection here would leave the whole
@@ -57,7 +61,7 @@ export default function Chat({ settings, onEndSession, onMessagesChanged }: Chat
     if (greetedRef.current) return;
     greetedRef.current = true;
     setSending(true);
-    void chatTurn(settings, persona, [], 'Hello! Please greet me and start our conversation.')
+    void chatTurn(settings, persona, [], 'Hello! Please greet me and start our conversation.', true)
       .then((result) => {
         setMessages([{ id: nextId(), role: 'tutor', text: result.text, source: result.source }]);
         if (result.error) setError(result.error);
